@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>GolfBoy Web Pro — Dual-Device Launch Monitor</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- PeerJS (WebRTC Dual-Device Pairing) -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+
+  <!-- Three.js (3D Driving Range & Shot Tracer) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <!-- MediaPipe Pose & Drawing Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <style>
+    body {
+      background-color: #090d16;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow-x: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .hud-card {
+      background: rgba(15, 23, 42, 0.82);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .metric-val {
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.03em;
+    }
+  </style>
+</head>
+<body class="h-screen w-screen flex flex-col overflow-hidden">
+
+  <!-- TOP NAVIGATION BAR -->
+  <header class="h-14 px-4 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between shrink-0 z-30">
+    <div class="flex items-center gap-3">
+      <div class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" id="conn-dot"></div>
+      <span class="font-bold text-lg tracking-tight text-white">GOLFBOY <span class="text-emerald-400 font-mono text-xs px-1.5 py-0.5 bg-emerald-950 rounded border border-emerald-700">PRO WEB</span></span>
+      <span id="conn-status" class="text-xs text-slate-400 hidden sm:inline">Standalone Ready</span>
+    </div>
+
+    <!-- Mode Switcher -->
+    <div class="flex bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs font-semibold">
+      <button onclick="switchMode('display')" id="tab-display" class="px-3 py-1.5 rounded-md bg-emerald-500 text-slate-950 transition">
+        1. iPad 3D Display
+      </button>
+      <button onclick="switchMode('camera')" id="tab-camera" class="px-3 py-1.5 rounded-md text-slate-300 hover:text-white transition">
+        2. iPhone Sensor Cam
+      </button>
+      <button onclick="switchMode('optical')" id="tab-optical" class="px-3 py-1.5 rounded-md text-slate-300 hover:text-white transition">
+        3. 240fps Slo-Mo Lab
+      </button>
+    </div>
+
+    <!-- Club Selector & Audio Voice Toggle -->
+    <div class="flex items-center gap-2">
+      <select id="club-select" onchange="onClubChange()" class="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5 font-semibold focus:outline-none focus:border-emerald-400">
+        <option value="DR" data-loft="10.5" data-smash="1.46" data-spin="2500" data-mult="1.00">Driver (10.5°)</option>
+        <option value="3W" data-loft="15.0" data-smash="1.42" data-spin="3600" data-mult="0.95">3-Wood (15°)</option>
+        <option value="5i" data-loft="27.0" data-smash="1.36" data-spin="5200" data-mult="0.86">5-Iron (27°)</option>
+        <option value="7i" data-loft="34.0" data-smash="1.32" data-spin="6800" data-mult="0.82" selected>7-Iron (34° AP2)</option>
+        <option value="9i" data-loft="42.0" data-smash="1.26" data-spin="8400" data-mult="0.78">9-Iron (42°)</option>
+        <option value="PW" data-loft="46.0" data-smash="1.23" data-spin="9200" data-mult="0.76">Pitching Wedge (46°)</option>
+        <option value="SW" data-loft="56.0" data-smash="1.15" data-spin="10200" data-mult="0.73">Sand Wedge (56°)</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- ===================================================================== -->
+  <!-- VIEW 1: iPAD PRO 12.9" 3D SIMULATOR DISPLAY & TELEMETRY DASHBOARD      -->
+  <!-- ===================================================================== -->
+  <main id="view-display" class="relative flex-1 w-full h-full overflow-hidden">
+    <!-- Three.js 3D Viewport -->
+    <div id="three-container" class="absolute inset-0 w-full h-full"></div>
+
+    <!-- Top-Left Pairing & Session Bar -->
+    <div class="absolute top-4 left-4 z-20 flex flex-wrap items-center gap-3">
+      <div class="hud-card px-4 py-2.5 rounded-xl flex items-center gap-3">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">iPad Pairing Code</div>
+          <div id="display-room-code" class="text-xl font-mono font-bold text-emerald-400">----</div>
+        </div>
+        <button onclick="initDisplayPeer()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-600 text-slate-200">
+          New Code
+        </button>
+      </div>
+
+      <!-- Test Shot Button for Immediate Trial -->
+      <button onclick="triggerSimulatedShot()" class="hud-card px-4 py-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/40 text-emerald-300 text-xs font-bold transition">
+        Fire Test Shot
+      </button>
+    </div>
+
+    <!-- Top-Right Picture-in-Picture (PiP) Remote iPhone Stream -->
+    <div class="absolute top-4 right-4 z-20 w-44 sm:w-56 hud-card rounded-xl overflow-hidden shadow-2xl">
+      <div class="px-2.5 py-1 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
+        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">iPhone 8+ Live Cam</span>
+        <span id="remote-swing-state" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-amber-400">STANDBY</span>
+      </div>
+      <div class="relative aspect-[3/4] bg-slate-950 flex items-center justify-center">
+        <video id="remote-video" autoplay playsinline muted class="w-full h-full object-cover"></video>
+        <div id="remote-video-placeholder" class="absolute inset-0 flex flex-col items-center justify-center p-3 text-center text-xs text-slate-500">
+          <span>Enter Pairing Code on iPhone Sensor Tab</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Telemetry HUD Grid (Golfboy Style) -->
+    <div class="absolute bottom-4 inset-x-4 z-20 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+      <div class="hud-card p-3 rounded-xl border-l-4 border-l-emerald-400">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Carry</div>
+        <div class="text-2xl sm:text-3xl font-black text-white metric-val"><span id="m-carry">0</span> <span class="text-xs font-normal text-slate-400">yds</span></div>
+      </div>
+      <div class="hud-card p-3 rounded-xl border-l-4 border-l-emerald-500">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Total</div>
+        <div class="text-2xl sm:text-3xl font-black text-emerald-400 metric-val"><span id="m-total">0</span> <span class="text-xs font-normal text-slate-400">yds</span></div>
+      </div>
+      <div class="hud-card p-3 rounded-xl">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Ball Speed</div>
+        <div class="text-2xl sm:text-3xl font-bold text-white metric-val"><span id="m-ballspeed">0.0</span> <span class="text-xs font-normal text-slate-400">mph</span></div>
+      </div>
+      <div class="hud-card p-3 rounded-xl">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Club Speed</div>
+        <div class="text-2xl sm:text-3xl font-bold text-white metric-val"><span id="m-clubspeed">0.0</span> <span class="text-xs font-normal text-slate-400">mph</span></div>
+      </div>
+      <div class="hud-card p-3 rounded-xl">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Launch Angle</div>
+        <div class="text-2xl sm:text-3xl font-bold text-sky-400 metric-val"><span id="m-vla">0.0</span><span class="text-sm">°</span></div>
+      </div>
+      <div class="hud-card p-3 rounded-xl">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Direction</div>
+        <div class="text-2xl sm:text-3xl font-bold text-amber-400 metric-val" id="m-hla">0.0°</div>
+      </div>
+      <div class="hud-card p-3 rounded-xl">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Est. Spin</div>
+        <div class="text-2xl sm:text-3xl font-bold text-white metric-val"><span id="m-spin">0</span> <span class="text-xs font-normal text-slate-400">rpm</span></div>
+      </div>
+      <div class="hud-card p-3 rounded-xl">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Tempo / Smash</div>
+        <div class="text-xl sm:text-2xl font-bold text-purple-400 metric-val"><span id="m-tempo">3.0:1</span> <span class="text-xs text-slate-400" id="m-smash">(1.32)</span></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- VIEW 2: iPHONE 8+ CAMERA SENSOR & AUTO-SWING DETECTOR                 -->
+  <!-- ===================================================================== -->
+  <section id="view-camera" class="hidden flex-1 w-full h-full flex-col lg:flex-row overflow-hidden bg-slate-950">
+    <!-- Left / Main Camera Feed with Skeleton & Impact Reticle -->
+    <div class="relative flex-1 h-full bg-black flex items-center justify-center overflow-hidden">
+      <video id="sensor-video" playsinline muted class="hidden"></video>
+      <canvas id="sensor-canvas" class="w-full h-full object-contain"></canvas>
+
+      <!-- Big State Banner Overlay -->
+      <div class="absolute top-4 inset-x-4 flex justify-between items-center pointer-events-none">
+        <div id="sensor-state-badge" class="px-4 py-2 rounded-xl font-mono font-bold text-sm bg-slate-900/90 border border-slate-700 text-amber-400 shadow-lg">
+          CAMERA IDLE — START SENSOR
+        </div>
+        <div class="hud-card px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300">
+          Mic Peak: <span id="mic-level" class="text-emerald-400 font-bold">0</span>%
+        </div>
+      </div>
+    </div>
+
+    <!-- Right / Bottom Sensor Control Panel -->
+    <div class="w-full lg:w-80 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
+      <!-- Pairing Input -->
+      <div class="bg-slate-800/70 p-3 rounded-xl border border-slate-700">
+        <label class="text-xs font-bold uppercase text-slate-400 block mb-1.5">Connect to iPad 4-Digit Code</label>
+        <div class="flex gap-2">
+          <input id="join-code-input" type="text" placeholder="e.g. 4821" maxlength="4" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-center text-lg tracking-widest focus:outline-none focus:border-emerald-400" />
+          <button onclick="connectToDisplay()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg text-xs shrink-0">
+            Pair iPad
+          </button>
+        </div>
+      </div>
+
+      <!-- Start/Stop Camera -->
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="startSensorCamera('environment')" class="py-2.5 px-3 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-xl text-xs">
+          Start Rear Cam
+        </button>
+        <button onclick="startSensorCamera('user')" class="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl text-xs border border-slate-700">
+          Start Front Cam
+        </button>
+      </div>
+
+      <!-- Calibration & Sensitivity Controls -->
+      <div class="space-y-3 bg-slate-800/40 p-3 rounded-xl border border-slate-800 text-xs">
+        <div>
+          <div class="flex justify-between mb-1">
+            <span class="text-slate-400">Impact Mic Threshold</span>
+            <span id="thresh-label" class="font-mono text-emerald-400">65%</span>
+          </div>
+          <input id="mic-threshold" type="range" min="25" max="95" value="65" oninput="document.getElementById('thresh-label').innerText = this.value + '%'" class="w-full accent-emerald-400" />
+        </div>
+        <div>
+          <div class="flex justify-between mb-1">
+            <span class="text-slate-400">Speed Calibration Factor</span>
+            <span id="cal-label" class="font-mono text-emerald-400">1.00x</span>
+          </div>
+          <input id="speed-cal" type="range" min="0.70" max="1.40" step="0.02" value="1.00" oninput="document.getElementById('cal-label').innerText = parseFloat(this.value).toFixed(2) + 'x'" class="w-full accent-emerald-400" />
+        </div>
+      </div>
+
+      <div class="text-[11px] text-slate-400 leading-relaxed bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+        <strong class="text-slate-200 block mb-1">How Auto-Swing Works:</strong>
+        1. Place iPhone 8+ on tripod 7 ft away (Face-On or Down-The-Line).<br/>
+        2. Address the ball inside the green box and hold still for 1.2s until <span class="text-emerald-400 font-mono">ARMED</span>.<br/>
+        3. Swing normally. Pose velocity + acoustic impact instantly transmit your shot to the iPad Pro!
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- VIEW 3: 240 FPS SLO-MO OPTICAL LAUNCH ANALYZER                        -->
+  <!-- ===================================================================== -->
+  <section id="view-optical" class="hidden flex-1 w-full h-full flex-col lg:flex-row overflow-hidden bg-slate-950">
+    <div class="relative flex-1 h-full bg-black flex flex-col items-center justify-center overflow-hidden p-2">
+      <video id="slomo-video" playsinline muted class="hidden"></video>
+      <canvas id="slomo-canvas" class="max-w-full max-h-[78vh] border border-slate-800 rounded-lg cursor-crosshair"></canvas>
+
+      <!-- Frame Stepping Bar -->
+      <div class="mt-3 flex flex-wrap items-center gap-2 bg-slate-900 px-4 py-2 rounded-xl border border-slate-800">
+        <button onclick="stepSlomoFrame(-5)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs font-mono">-5f</button>
+        <button onclick="stepSlomoFrame(-1)" class="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded text-xs font-mono font-bold">-1 Frame (4.17ms)</button>
+        <span id="slomo-time" class="font-mono text-xs text-slate-300 px-3">t = 0.0000 s (Frame 0)</span>
+        <button onclick="stepSlomoFrame(1)" class="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded text-xs font-mono font-bold">+1 Frame (4.17ms)</button>
+        <button onclick="stepSlomoFrame(5)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs font-mono">+5f</button>
+      </div>
+    </div>
+
+    <!-- Right Controls for 240fps Optical Tracking -->
+    <div class="w-full lg:w-80 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
+      <div>
+        <label class="text-xs font-bold uppercase text-slate-400 block mb-2">Load iPhone 240fps Slo-Mo Video</label>
+        <input type="file" accept="video/*" onchange="loadSlomoFile(event)" class="block w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-emerald-500 file:text-slate-950 hover:file:bg-emerald-400" />
+      </div>
+
+      <div class="bg-slate-800/50 p-3 rounded-xl border border-slate-700 space-y-2 text-xs">
+        <div class="font-bold text-white">Optical Measurement Steps:</div>
+        <p class="text-slate-400 text-[11px]">1. Step to the exact frame of impact and click the center of the golf ball (<span class="text-emerald-400 font-mono">Point P1</span>).</p>
+        <p class="text-slate-400 text-[11px]">2. Step forward <strong class="text-white">+3 or +4 frames</strong> (at 240fps) and click the airborne ball (<span class="text-sky-400 font-mono">Point P2</span>).</p>
+        <div class="pt-2 flex justify-between items-center">
+          <span class="text-slate-400">Camera Frame View Width:</span>
+          <input id="fov-width-m" type="number" value="1.60" step="0.05" class="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-right font-mono text-white" />
+          <span class="text-slate-400">m</span>
+        </div>
+        <button onclick="resetSlomoPoints()" class="w-full mt-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-600 font-semibold">
+          Reset Clicked Points
+        </button>
+      </div>
+
+      <!-- Calculated Optical Results -->
+      <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+        <div class="flex justify-between text-xs">
+          <span class="text-slate-400">Measured Ball Speed:</span>
+          <span id="opt-speed" class="font-mono font-bold text-emerald-400">0.0 mph</span>
+        </div>
+        <div class="flex justify-between text-xs">
+          <span class="text-slate-400">Measured Launch (VLA):</span>
+          <span id="opt-vla" class="font-mono font-bold text-sky-400">0.0°</span>
+        </div>
+        <button onclick="sendOpticalShotToRange()" class="w-full mt-2 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-xs transition">
+          Launch Shot in 3D Range
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- APPLICATION LOGIC: WEBRTC, 3D PHYSICS, MEDIAPIPE POSE & AUDIO IMPACT  -->
+  <!-- ===================================================================== -->
+  <script>
+    // --- GLOBAL STATE ---
+    let currentMode = 'display';
+    let peer = null;
+    let dataConn = null;
+    let localStream = null;
+
+    // Selected Club Parameters (Default: 7-Iron 34 deg)
+    let currentClub = { code: '7i', loft: 34.0, smash: 1.32, spin: 6800, mult: 0.82 };
+
+    function onClubChange() {
+      const sel = document.getElementById('club-select');
+      const opt = sel.options[sel.selectedIndex];
+      currentClub = {
+        code: opt.value,
+        loft: parseFloat(opt.dataset.loft),
+        smash: parseFloat(opt.dataset.smash),
+        spin: parseFloat(opt.dataset.spin),
+        mult: parseFloat(opt.dataset.mult)
+      };
+      if (dataConn && dataConn.open) {
+        dataConn.send({ type: 'CLUB_SYNC', club: currentClub });
+      }
+    }
+
+    function switchMode(mode) {
+      currentMode = mode;
+      ['display', 'camera', 'optical'].forEach(m => {
+        document.getElementById('view-' + m).classList.toggle('hidden', m !== mode);
+        document.getElementById('view-' + m).classList.toggle('flex', m === mode && m !== 'display');
+        const btn = document.getElementById('tab-' + m);
+        if (m === mode) {
+          btn.className = 'px-3 py-1.5 rounded-md bg-emerald-500 text-slate-950 transition';
+        } else {
+          btn.className = 'px-3 py-1.5 rounded-md text-slate-300 hover:text-white transition';
+        }
+      });
+      if (mode === 'display') onResize3D();
+    }
+
+    // =========================================================================
+    // 1. WEBRTC DUAL-DEVICE PAIRING (PeerJS)
+    // =========================================================================
+    function initDisplayPeer() {
+      const code = Math.floor(1000 + Math.random() * 9000).toString();
+      const peerId = 'golfboy-pro-' + code;
+      document.getElementById('display-room-code').innerText = code;
+
+      if (peer) peer.destroy();
+      peer = new Peer(peerId);
+
+      peer.on('open', () => {
+        document.getElementById('conn-status').innerText = 'Waiting for iPhone (' + code + ')';
+      });
+
+      peer.on('connection', (conn) => {
+        dataConn = conn;
+        document.getElementById('conn-status').innerText = 'Paired with iPhone Sensor';
+        document.getElementById('conn-dot').className = 'w-3 h-3 rounded-full bg-sky-400';
+
+        conn.on('data', (payload) => {
+          if (payload.type === 'SHOT_DATA') {
+            processIncomingShot(payload.shot);
+          } else if (payload.type === 'SWING_STATE') {
+            document.getElementById('remote-swing-state').innerText = payload.state;
+          }
+        });
+      });
+
+      peer.on('call', (call) => {
+        call.answer();
+        call.on('stream', (remoteStream) => {
+          const vid = document.getElementById('remote-video');
+          vid.srcObject = remoteStream;
+          document.getElementById('remote-video-placeholder').classList.add('hidden');
+        });
+      });
+    }
+
+    function connectToDisplay() {
+      const code = document.getElementById('join-code-input').value.trim();
+      if (code.length !== 4) return alert('Enter the 4-digit code shown on your iPad.');
+      const targetId = 'golfboy-pro-' + code;
+
+      if (peer) peer.destroy();
+      peer = new Peer();
+
+      peer.on('open', () => {
+        dataConn = peer.connect(targetId);
+        dataConn.on('open', () => {
+          document.getElementById('conn-status').innerText = 'Connected to iPad (' + code + ')';
+          if (localStream) {
+            peer.call(targetId, localStream);
+          }
+        });
+        dataConn.on('data', (payload) => {
+          if (payload.type === 'CLUB_SYNC') {
+            currentClub = payload.club;
+            document.getElementById('club-select').value = currentClub.code;
+          }
+        });
+      });
+    }
+
+    // =========================================================================
+    // 2. THREE.JS 3D DRIVING RANGE & AERODYNAMIC BALL FLIGHT SIMULATOR
+    // =========================================================================
+    let scene, camera, renderer, ballMesh, trailLine;
+    let flightPoints = [];
+    let animIndex = 0;
+    let isAnimatingFlight = false;
+
+    function init3DRange() {
+      const container = document.getElementById('three-container');
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x070b14);
+      scene.fog = new THREE.FogExp2(0x070b14, 0.0028);
+
+      camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 600);
+      camera.position.set(0, 3.2, -7.5);
+      camera.lookAt(0, 4, 80);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      container.appendChild(renderer.domElement);
+
+      // Lighting
+      const amb = new THREE.AmbientLight(0xffffff, 0.65);
+      scene.add(amb);
+      const dir = new THREE.DirectionalLight(0x34d399, 0.8);
+      dir.position.set(20, 60, -10);
+      scene.add(dir);
+
+      // Fairway Grid & Distance Rings (Every 50 Yards = 45.72m)
+      const grid = new THREE.GridHelper(320, 64, 0x10b981, 0x1e293b);
+      grid.position.z = 130;
+      scene.add(grid);
+
+      for (let yd = 50; yd <= 250; yd += 50) {
+        const zMeters = yd * 0.9144;
+        const ringGeo = new THREE.RingGeometry(4.5, 5.0, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x10b981, side: THREE.DoubleSide });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.set(0, 0.05, zMeters);
+        scene.add(ring);
+      }
+
+      // Golf Ball Mesh
+      const ballGeo = new THREE.SphereGeometry(0.35, 24, 24);
+      const ballMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x10b981, emissiveIntensity: 0.4 });
+      ballMesh = new THREE.Mesh(ballGeo, ballMat);
+      ballMesh.position.set(0, 0.35, 0);
+      scene.add(ballMesh);
+
+      // Shot Tracer Line
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x34d399, linewidth: 3 });
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.1, 0)]);
+      trailLine = new THREE.Line(lineGeo, lineMat);
+      scene.add(trailLine);
+
+      window.addEventListener('resize', onResize3D);
+      animate3D();
+    }
+
+    function onResize3D() {
+      const container = document.getElementById('three-container');
+      if (!renderer || !container.clientWidth) return;
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    // Aerodynamic Physics Engine (Drag + Magnus Lift)
+    function computeAerodynamicFlight(ballSpeedMph, vlaDeg, hlaDeg, backspinRpm) {
+      const v0 = ballSpeedMph * 0.44704; // mph to m/s
+      const vla = vlaDeg * Math.PI / 180;
+      const hla = hlaDeg * Math.PI / 180;
+
+      let x = 0, y = 0.05, z = 0;
+      let vx = v0 * Math.cos(vla) * Math.sin(hla);
+      let vy = v0 * Math.sin(vla);
+      let vz = v0 * Math.cos(vla) * Math.cos(hla);
+
+      const dt = 0.02;
+      const g = 9.81;
+      const points = [new THREE.Vector3(x, y, z)];
+      let maxY = 0;
+
+      // Spin decay & lift coefficients
+      const spinFactor = Math.min(backspinRpm / 10000, 1.2);
+      const cl = 0.14 + 0.18 * spinFactor;
+      const cd = 0.24 + 0.08 * spinFactor;
+      const kAero = 0.0022;
+
+      while (y >= 0 && z < 350) {
+        const v = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        const ax = -kAero * cd * v * vx;
+        const ay = -g - (kAero * cd * v * vy) + (kAero * cl * v * vz);
+        const az = -(kAero * cd * v * vz) - (kAero * cl * v * vy);
+
+        vx += ax * dt;
+        vy += ay * dt;
+        vz += az * dt;
+
+        x += vx * dt;
+        y += vy * dt;
+        z += vz * dt;
+        if (y > maxY) maxY = y;
+        points.push(new THREE.Vector3(x, Math.max(0.05, y), z));
+      }
+
+      const carryYards = Math.round((z / 0.9144));
+      // Roll out factor depends on descent/spin
+      const rollMultiplier = Math.max(1.02, 1.14 - (backspinRpm / 75000));
+      const totalYards = Math.round(carryYards * rollMultiplier);
+
+      return { points, carryYards, totalYards, apexFeet: Math.round(maxY * 3.28084) };
+    }
+
+    function processIncomingShot(shot) {
+      const flight = computeAerodynamicFlight(shot.ballSpeed, shot.vla, shot.hla, shot.spin);
+
+      // Update HUD Numbers
+      document.getElementById('m-carry').innerText = flight.carryYards;
+      document.getElementById('m-total').innerText = flight.totalYards;
+      document.getElementById('m-ballspeed').innerText = shot.ballSpeed.toFixed(1);
+      document.getElementById('m-clubspeed').innerText = shot.clubSpeed.toFixed(1);
+      document.getElementById('m-vla').innerText = shot.vla.toFixed(1);
+      const dirLabel = shot.hla >= 0 ? shot.hla.toFixed(1) + '° R' : Math.abs(shot.hla).toFixed(1) + '° L';
+      document.getElementById('m-hla').innerText = dirLabel;
+      document.getElementById('m-spin').innerText = Math.round(shot.spin);
+      document.getElementById('m-tempo').innerText = shot.tempo + ':1';
+      document.getElementById('m-smash').innerText = '(' + (shot.ballSpeed / shot.clubSpeed).toFixed(2) + ')';
+
+      // Trigger 3D Tracer Animation
+      flightPoints = flight.points;
+      animIndex = 1;
+      isAnimatingFlight = true;
+    }
+
+    function triggerSimulatedShot() {
+      const baseClubSpeed = 104 * currentClub.mult + (Math.random() * 4 - 2);
+      const ballSpeed = baseClubSpeed * currentClub.smash;
+      const vla = currentClub.loft * 0.58 + (Math.random() * 2 - 1);
+      const hla = (Math.random() * 4 - 2);
+      processIncomingShot({
+        clubSpeed: baseClubSpeed,
+        ballSpeed: ballSpeed,
+        vla: vla,
+        hla: hla,
+        spin: currentClub.spin + (Math.random() * 300 - 150),
+        tempo: (2.8 + Math.random() * 0.4).toFixed(1)
+      });
+    }
+
+    function animate3D() {
+      requestAnimationFrame(animate3D);
+      if (isAnimatingFlight && flightPoints.length > 1) {
+        animIndex = Math.min(animIndex + 2, flightPoints.length - 1);
+        const currentSlice = flightPoints.slice(0, animIndex + 1);
+        trailLine.geometry.setFromPoints(currentSlice);
+        const tip = flightPoints[animIndex];
+        ballMesh.position.copy(tip);
+
+        // Smooth camera follow
+        camera.position.x = tip.x * 0.35;
+        camera.position.y = Math.max(3.2, tip.y * 0.45 + 2.5);
+        camera.position.z = Math.min(tip.z - 12, 95);
+        camera.lookAt(tip.x, Math.max(2, tip.y * 0.5), tip.z + 15);
+
+        if (animIndex >= flightPoints.length - 1) {
+          isAnimatingFlight = false;
+          setTimeout(() => {
+            camera.position.set(0, 3.2, -7.5);
+            camera.lookAt(0, 4, 80);
+          }, 2200);
+        }
+      }
+      if (renderer && scene && camera) renderer.render(scene, camera);
+    }
+
+    // =========================================================================
+    // 3. iPHONE 8+ CAMERA SENSOR: MEDIAPIPE POSE + WEB AUDIO IMPACT DETECTION
+    // =========================================================================
+    let poseDetector = null;
+    let audioCtx = null, analyser = null, micData = null;
+    let swingState = 'ADDRESS_WAIT'; // ADDRESS_WAIT -> ARMED -> BACKSWING -> DOWNSWING -> COOLDOWN
+    let addressStillStart = 0;
+    let backswingStartTime = 0;
+    let topOfSwingTime = 0;
+    let minWristY = 1.0;
+    let prevWristPos = null;
+    let maxDownswingVel = 0;
+
+    async function startSensorCamera(facingMode) {
+      const video = document.getElementById('sensor-video');
+      const canvas = document.getElementById('sensor-canvas');
+      const ctx = canvas.getContext('2d');
+
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+      }
+
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } },
+          audio: true
+        });
+        video.srcObject = localStream;
+        await video.play();
+
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+
+        // Setup Web Audio API Impact Listener
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(localStream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        micData = new Uint8Array(analyser.frequencyBinCount);
+
+        // Setup MediaPipe Pose
+        if (!poseDetector) {
+          poseDetector = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+          });
+          poseDetector.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.55,
+            minTrackingConfidence: 0.55
+          });
+          poseDetector.onResults((results) => onPoseFrame(results, canvas, ctx));
+        }
+
+        updateSwingState('ADDRESS_WAIT');
+        processSensorLoop(video);
+      } catch (err) {
+        alert('Camera/Mic access required on HTTPS: ' + err.message);
+      }
+    }
+
+    async function processSensorLoop(video) {
+      if (video.paused || video.ended) return;
+      await poseDetector.send({ image: video });
+      requestAnimationFrame(() => processSensorLoop(video));
+    }
+
+    function getMicPeakPercent() {
+      if (!analyser) return 0;
+      analyser.getByteTimeDomainData(micData);
+      let maxDev = 0;
+      for (let i = 0; i < micData.length; i++) {
+        const dev = Math.abs(micData[i] - 128);
+        if (dev > maxDev) maxDev = dev;
+      }
+      const pct = Math.min(100, Math.round((maxDev / 128) * 100));
+      document.getElementById('mic-level').innerText = pct;
+      return pct;
+    }
+
+    function updateSwingState(newState) {
+      swingState = newState;
+      const badge = document.getElementById('sensor-state-badge');
+      badge.innerText = 'STATE: ' + newState;
+      if (dataConn && dataConn.open) {
+        dataConn.send({ type: 'SWING_STATE', state: newState });
+      }
+    }
+
+    function onPoseFrame(results, canvas, ctx) {
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+      // Draw Target Address Box
+      ctx.strokeStyle = swingState === 'ARMED' ? '#10b981' : '#f59e0b';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(canvas.width * 0.35, canvas.height * 0.52, canvas.width * 0.30, canvas.height * 0.32);
+
+      const micPeak = getMicPeakPercent();
+      const micThresh = parseInt(document.getElementById('mic-threshold').value, 10);
+
+      if (results.poseLandmarks) {
+        drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#34d399', lineWidth: 3 });
+        drawLandmarks(ctx, results.poseLandmarks, { color: '#ffffff', lineWidth: 1, radius: 3 });
+
+        const lWrist = results.poseLandmarks[15];
+        const rWrist = results.poseLandmarks[16];
+        const lShoulder = results.poseLandmarks[11];
+        const rShoulder = results.poseLandmarks[12];
+        const lHip = results.poseLandmarks[23];
+
+        if (lWrist && rWrist && lShoulder && lHip) {
+          const wristX = (lWrist.x + rWrist.x) * 0.5;
+          const wristY = (lWrist.y + rWrist.y) * 0.5;
+          const torsoLen = Math.max(0.15, Math.abs(lHip.y - lShoulder.y));
+          const now = performance.now();
+
+          let wristVel = 0;
+          if (prevWristPos) {
+            const dx = (wristX - prevWristPos.x) / torsoLen;
+            const dy = (wristY - prevWristPos.y) / torsoLen;
+            const dt = Math.max(0.008, (now - prevWristPos.t) / 1000);
+            wristVel = Math.sqrt(dx * dx + dy * dy) / dt;
+          }
+          prevWristPos = { x: wristX, y: wristY, t: now };
+
+          // State Machine
+          const inAddressBox = wristX > 0.32 && wristX < 0.68 && wristY > 0.50 && wristY < 0.86;
+
+          if (swingState === 'ADDRESS_WAIT') {
+            if (inAddressBox && wristVel < 1.2) {
+              if (!addressStillStart) addressStillStart = now;
+              if (now - addressStillStart > 1200) {
+                updateSwingState('ARMED — SWING WHEN READY');
+                minWristY = wristY;
+                maxDownswingVel = 0;
+              }
+            } else {
+              addressStillStart = 0;
+            }
+          } else if (swingState === 'ARMED — SWING WHEN READY') {
+            // Detect takeaway / backswing upward movement
+            if (wristY < minWristY - 0.08 && wristVel > 1.8) {
+              backswingStartTime = now;
+              minWristY = wristY;
+              updateSwingState('BACKSWING');
+            }
+          } else if (swingState === 'BACKSWING') {
+            if (wristY < minWristY) {
+              minWristY = wristY;
+              topOfSwingTime = now;
+            } else if (wristY > minWristY + 0.06 && wristVel > 3.0) {
+              updateSwingState('DOWNSWING');
+            }
+          } else if (swingState === 'DOWNSWING') {
+            if (wristVel > maxDownswingVel) maxDownswingVel = wristVel;
+
+            // Impact Trigger: Wrists return to impact zone OR Mic Spike
+            const backInZone = wristY > 0.52;
+            const acousticHit = micPeak >= micThresh;
+
+            if ((backInZone && maxDownswingVel > 4.5) || acousticHit) {
+              const tBack = Math.max(0.45, (topOfSwingTime - backswingStartTime) / 1000);
+              const tDown = Math.max(0.18, (now - topOfSwingTime) / 1000);
+              const tempoRatio = Math.min(4.5, Math.max(1.8, tBack / tDown)).toFixed(1);
+
+              const calFactor = parseFloat(document.getElementById('speed-cal').value);
+              const rawClubMph = (72 + maxDownswingVel * 3.1) * currentClub.mult * calFactor;
+              const clubSpeed = Math.min(125, Math.max(55, rawClubMph));
+              const ballSpeed = clubSpeed * currentClub.smash;
+
+              // Estimate Launch Angle from shoulder tilt + club loft
+              const shoulderTilt = (rShoulder.y - lShoulder.y) * 25;
+              const vla = Math.max(7.5, currentClub.loft * 0.58 + shoulderTilt);
+              const hla = (wristX - 0.5) * 14;
+
+              const shotPayload = {
+                clubSpeed: clubSpeed,
+                ballSpeed: ballSpeed,
+                vla: vla,
+                hla: hla,
+                spin: currentClub.spin,
+                tempo: tempoRatio
+              };
+
+              processIncomingShot(shotPayload);
+              if (dataConn && dataConn.open) {
+                dataConn.send({ type: 'SHOT_DATA', shot: shotPayload });
+              }
+
+              updateSwingState('SHOT FIRED! (' + Math.round(ballSpeed) + ' MPH)');
+              setTimeout(() => {
+                addressStillStart = 0;
+                updateSwingState('ADDRESS_WAIT');
+              }, 2800);
+            }
+          }
+        }
+      }
+      ctx.restore();
+    }
+
+    // =========================================================================
+    // 4. 240 FPS SLO-MO OPTICAL LAUNCH ANALYZER
+    // =========================================================================
+    let slomoPoints = [];
+    let lastMeasuredOptical = { ballSpeed: 0, vla: 0 };
+
+    function loadSlomoFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const vid = document.getElementById('slomo-video');
+      vid.src = URL.createObjectURL(file);
+      vid.onloadedmetadata = () => {
+        vid.currentTime = 0;
+        slomoPoints = [];
+      };
+      vid.onseeked = renderSlomoCanvas;
+    }
+
+    function stepSlomoFrame(frames) {
+      const vid = document.getElementById('slomo-video');
+      if (!vid.src) return;
+      const dt = frames * (1 / 240);
+      vid.currentTime = Math.max(0, Math.min(vid.duration || 10, vid.currentTime + dt));
+      const frameNum = Math.round(vid.currentTime * 240);
+      document.getElementById('slomo-time').innerText = `t = ${vid.currentTime.toFixed(4)} s (Frame ${frameNum})`;
+    }
+
+    function renderSlomoCanvas() {
+      const vid = document.getElementById('slomo-video');
+      const canvas = document.getElementById('slomo-canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = vid.videoWidth || 1280;
+      canvas.height = vid.videoHeight || 720;
+      ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+
+      // Draw clicked points
+      slomoPoints.forEach((pt, idx) => {
+        ctx.fillStyle = idx === 0 ? '#10b981' : '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      if (slomoPoints.length === 2) {
+        ctx.strokeStyle = '#34d399';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(slomoPoints[0].x, slomoPoints[0].y);
+        ctx.lineTo(slomoPoints[1].x, slomoPoints[1].y);
+        ctx.stroke();
+      }
+    }
+
+    document.getElementById('slomo-canvas').addEventListener('click', (e) => {
+      const canvas = e.target;
+      const vid = document.getElementById('slomo-video');
+      if (!vid.src || slomoPoints.length >= 2) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+
+      slomoPoints.push({ x, y, t: vid.currentTime });
+      renderSlomoCanvas();
+
+      if (slomoPoints.length === 2) {
+        const p1 = slomoPoints[0];
+        const p2 = slomoPoints[1];
+        const dt = Math.max(1 / 240, Math.abs(p2.t - p1.t));
+        const dxPx = Math.abs(p2.x - p1.x);
+        const dyPx = p1.y - p2.y; // upward is positive
+        const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
+
+        const fovMeters = parseFloat(document.getElementById('fov-width-m').value) || 1.6;
+        const metersPerPixel = fovMeters / canvas.width;
+        const velocityMps = (distPx * metersPerPixel) / dt;
+        const ballSpeedMph = velocityMps * 2.23694;
+        const vlaDeg = Math.atan2(dyPx, dxPx) * (180 / Math.PI);
+
+        lastMeasuredOptical = {
+          ballSpeed: Math.min(195, Math.max(20, ballSpeedMph)),
+          vla: Math.max(2, Math.min(60, vlaDeg))
+        };
+
+        document.getElementById('opt-speed').innerText = lastMeasuredOptical.ballSpeed.toFixed(1) + ' mph';
+        document.getElementById('opt-vla').innerText = lastMeasuredOptical.vla.toFixed(1) + '°';
+      }
+    });
+
+    function resetSlomoPoints() {
+      slomoPoints = [];
+      renderSlomoCanvas();
+    }
+
+    function sendOpticalShotToRange() {
+      if (lastMeasuredOptical.ballSpeed <= 0) return alert('Click P1 (Impact) and P2 (+3 frames) first.');
+      const shotPayload = {
+        clubSpeed: lastMeasuredOptical.ballSpeed / currentClub.smash,
+        ballSpeed: lastMeasuredOptical.ballSpeed,
+        vla: lastMeasuredOptical.vla,
+        hla: 0.0,
+        spin: currentClub.spin,
+        tempo: '3.0'
+      };
+      switchMode('display');
+      processIncomingShot(shotPayload);
+    }
+
+    // Initialize 3D Range & PeerJS Code on Load
+    window.addEventListener('DOMContentLoaded', () => {
+      init3DRange();
+      initDisplayPeer();
+    });
+  </script>
+</body>
+</html>
